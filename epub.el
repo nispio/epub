@@ -1,22 +1,53 @@
 
+(require 'arc-mode)
+
 (defun epub-mode ()
-  (let ((archive buffer-file-name))
+  (let* ((archive buffer-file-name)
+         (name (file-name-sans-extension (file-name-nondirectory archive)))
+         (toc (format "Table of Contents (%s)" name)))
     (kill-buffer)
-    (epub--show-toc archive)))
+    (epub--show-toc archive toc)))
 
-(defvar archive-file nil)
+(defvar epub--debug nil)
 
-(defun epub--show-toc (archive)
+(defvar-local archive-file nil)
+
+(defsubst cadr-safe (x)
+  "Return the safe car of the cdr of X."
+  (car-safe (cdr-safe x)))
+
+(defsubst cddr-safe (x)
+  "Return the safe cdr of the cdr of X."
+  (cdr-safe (cdr-safe x)))
+
+(defsubst caddr-safe (x)
+  "Return the safe car of the cdr of the cdr of X."
+  (car-safe (cdr-safe (cdr-safe x))))
+
+(defun epub--show-toc (archive &optional buffer)
   (let* ((ncx-file (epub--locate-ncx archive))
          (ncx (epub--archive-get-xml archive ncx-file))
-         (buf (get-buffer-create "*TOC*")))
-    (with-current-buffer buf
-      (erase-buffer)
-      (set (make-local-variable 'archive-file) archive)
-      (archive-zip-extract archive ncx-file)
-      (epub--pretty-print-xml)
-      (goto-char (point-min)))
-    (pop-to-buffer-same-window buf)))
+         (title (caddr-safe (assq 'text (assq 'docTitle ncx))))
+         (navmap (cddr-safe (assq 'navMap ncx)))
+         (buf (get-buffer-create (or buffer "TOC"))))
+    (pop-to-buffer-same-window buf)
+    (indented-text-mode)
+    (erase-buffer)
+    (insert title "\n\n")
+    (epub--insert-navmap navmap)
+    (insert "\n\n")
+    (when epub--debug
+        (archive-zip-extract archive ncx-file)
+        (epub--pretty-print-xml))
+    (goto-char (point-min))
+    (set-buffer-modified-p nil)
+    (setq buffer-read-only t)
+    (setq archive-file archive)))a
+
+(defun epub--insert-navmap (navmap)
+  (cl-loop for navpoint in navmap
+           when (caddr-safe (assq 'text (assq 'navLabel navpoint)))
+           do (insert it "\n")))
 
 (defun epub--pretty-print-xml (&optional begin end)
   (interactive (and (use-region-p) (list (region-beginning) (region-end))))
