@@ -27,8 +27,8 @@
 (defun epub--show-toc (archive &optional buffer)
   (let* ((ncx-file (epub--locate-ncx archive))
          (ncx (epub--archive-get-xml archive ncx-file))
-         (title (caddr-safe (assq 'text (assq 'docTitle ncx))))
-         (navmap (cddr-safe (assq 'navMap ncx)))
+         (title (caddr-safe (epub--xml-node ncx 'docTitle 'text)))
+         (navmap (epub--xml-node ncx 'navMap))
          (buf (get-buffer-create (or buffer "TOC")))
          start)
     (pop-to-buffer-same-window buf)
@@ -50,10 +50,14 @@
     (unless no-pretty-print
       (epub--pretty-print-xml start (point)))))
 
+(defun epub--insert-navpoint (navpoint text)
+  ;; TODO: Turn these into buttons that link to chapters
+  (insert text "\n"))
+
 (defun epub--insert-navmap (navmap)
   (cl-loop for navpoint in navmap
-           when (caddr-safe (assq 'text (assq 'navLabel navpoint)))
-           do (insert it "\n")))
+           when (epub--xml-node navpoint 'navLabel 'text)
+           do (epub--insert-navpoint navpoint (caddr-safe it))))
 
 (defun epub--pretty-print-xml (&optional begin end)
   (interactive (and (use-region-p) (list (region-beginning) (region-end))))
@@ -66,10 +70,8 @@
 
 (defun epub--locate-rootfile (archive)
   (let* ((container (epub--archive-get-xml archive "META-INF/container.xml"))
-         (rootfiles (cdr-safe (assq 'rootfiles container)))
-         (rootfile (car-safe (cdr-safe (assq 'rootfile rootfiles))))
-         (full-path (cdr-safe (assq 'full-path rootfile)))
-         (media-type (cdr-safe (assq 'media-type rootfile))))
+         (rootfile (epub--xml-node container 'rootfiles 'rootfile))
+         (full-path (epub--xml-prop rootfile 'full-path)))
     (unless (stringp full-path)
       (error "Unable to locate epub document root file"))
     full-path))
@@ -77,18 +79,28 @@
 (defun epub--locate-ncx (archive)
   (let* ((rootfile (epub--locate-rootfile archive))
          (dom (epub--archive-get-xml archive rootfile))
-         (manifest (cdr (cdr-safe (assq 'manifest dom))))
+         (manifest (epub--xml-node dom 'manifest))
          (ncx
-          (cl-loop for item in manifest
-                   when (string= "ncx" (epub--xml-prop 'id item))
+          (cl-loop for item in (cddr-safe manifest)
+                   when (string= "ncx" (epub--xml-prop item 'id))
                    return item))
-         (href (epub--xml-prop 'href ncx)))
+         (href (epub--xml-prop ncx 'href)))
     (unless (stringp href)
       (error "Error locating ncx in epub document manifest"))
     (epub--href-relative href rootfile)))
 
-(defun epub--xml-prop (key item)
-  (cdr-safe (assq key (car-safe (cdr-safe item)))))
+(defun epub--xml-node (item &rest keys)
+  (unless (> (length keys) 0)
+    (error "Insufficient number of keys"))
+  (let ((node item))
+    (cl-loop for key in keys
+             if (assq key (cddr-safe node))
+             do (setq node it)
+             else return nil
+             finally return node)))
+
+(defun epub--xml-prop (item key)
+  (cdr-safe (assq key (cadr-safe item))))
 
 (defun epub--href-relative (name &optional relative-to)
   (concat (or (file-name-directory (or relative-to "")) "") name))
