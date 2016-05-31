@@ -29,20 +29,26 @@
          (ncx (epub--archive-get-xml archive ncx-file))
          (title (caddr-safe (assq 'text (assq 'docTitle ncx))))
          (navmap (cddr-safe (assq 'navMap ncx)))
-         (buf (get-buffer-create (or buffer "TOC"))))
+         (buf (get-buffer-create (or buffer "TOC")))
+         start)
     (pop-to-buffer-same-window buf)
     (indented-text-mode)
     (erase-buffer)
     (insert title "\n\n")
     (epub--insert-navmap navmap)
     (insert "\n\n")
-    (when epub--debug
-        (archive-zip-extract archive ncx-file)
-        (epub--pretty-print-xml))
+    (if epub--debug (epub--insert-xml archive ncx-file))
     (goto-char (point-min))
     (set-buffer-modified-p nil)
     (setq buffer-read-only t)
-    (setq archive-file archive)))a
+    (setq archive-file archive)))
+
+(defun epub--insert-xml (archive name &optional no-pretty-print)
+  (let ((start (point-marker)))
+    (archive-zip-extract archive name)
+    (decode-coding-inserted-region start (point) name)
+    (unless no-pretty-print
+      (epub--pretty-print-xml start (point)))))
 
 (defun epub--insert-navmap (navmap)
   (cl-loop for navpoint in navmap
@@ -89,7 +95,7 @@
 
 (defun epub--archive-get-xml (archive name &optional relative-to)
   (with-temp-buffer
-    (archive-zip-extract archive (epub--href-relative name relative-to))
+    (epub--insert-xml archive name t)
     (libxml-parse-xml-region (point-min) (point-max))))
 
 
