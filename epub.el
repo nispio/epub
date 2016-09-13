@@ -66,9 +66,10 @@
             (shr-insert-document dom))))
       (switch-to-buffer buf))))
 
-(defun epub--insert-navpoint (navpoint text archive)
+(defun epub--insert-navpoint (navpoint text archive &optional ident-str)
   (let ((navpoint-content (epub--xml-prop (epub--xml-node navpoint 'content) 'src))
         (point-start (point)))
+    (when ident-str (insert ident-str)) 
     (insert text)
     (make-text-button
      point-start (point)
@@ -77,10 +78,12 @@
      'follow-link t)                                               
     (insert "\n")))
 
-(defun epub--insert-navmap (navmap archive)
+(defun epub--insert-navmap (navmap archive &optional ident-str)
   (cl-loop for navpoint in navmap
            when (epub--xml-node navpoint 'navLabel 'text)
-           do (epub--insert-navpoint navpoint (caddr-safe it) archive)))
+           do
+           (epub--insert-navpoint navpoint (caddr-safe it) archive ident-str)
+           (epub--insert-navmap navpoint archive (concat ident-str "  "))))
 
 (defun epub--pretty-print-xml (&optional begin end)
   (interactive (and (use-region-p) (list (region-beginning) (region-end))))
