@@ -1,3 +1,4 @@
+;;; -*- lexical-binding: t -*-
 (require 'shr)
 (require 'arc-mode)
 
@@ -53,22 +54,20 @@
     (unless no-pretty-print
       (epub--pretty-print-xml start (point)))))
 
-(cl-defun epub--create-navpoint-handler (archive node-path buffer)
-  (lexical-let* ((arc archive)
-                 (buf buffer)
-                 (split-node (split-string node-path "#"))
-                 (arc-path (car split-node))
-                 (html-path (cadr split-node)))
+(defun epub--create-navpoint-handler (archive node-path buffer)
+  (let* ((split-node (split-string node-path "#"))
+         (arc-path (car split-node))
+         (html-path (cadr split-node)))
     (lambda (unused-param)
       (with-temp-buffer
         ;; TODO think about caching page content
-        (archive-zip-extract arc arc-path)
+        (archive-zip-extract archive arc-path)
         (let ((dom (libxml-parse-html-region (point-min) (point-max))))
-          (with-current-buffer (get-buffer-create buf)
+          (with-current-buffer (get-buffer-create buffer)
             (erase-buffer)
             (shr-insert-document dom)
             (goto-char (point-min)))))
-      (switch-to-buffer buf))))
+      (switch-to-buffer buffer))))
 
 (defun epub--insert-navpoint (navpoint ncx-path archive &optional ident-str)
   (let ((navpoint-content (epub--xml-prop (epub--xml-node navpoint 'content) 'src))
