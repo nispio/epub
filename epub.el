@@ -1,7 +1,9 @@
-
+;;; -*- lexical-binding: t -*-
+(require 'shr)
 (require 'arc-mode)
 
 (defun epub-mode ()
+  (interactive)
   (let* ((archive buffer-file-name)
          (name (file-name-sans-extension (file-name-nondirectory archive)))
          (toc (format "Table of Contents (%s)" name)))
@@ -25,7 +27,9 @@
   (car-safe (cdr-safe (cdr-safe x))))
 
 (defun epub--show-toc (archive &optional buffer)
-  (let* ((ncx-file (epub--locate-ncx archive))
+  (let* ((rootfile (epub--locate-rootfile archive))
+         (ncx-file (epub--locate-ncx archive rootfile))
+         (ncx-path (file-name-directory (or ncx-file "")))
          (ncx (epub--archive-get-xml archive ncx-file))
          (title (caddr-safe (epub--xml-node ncx 'docTitle 'text)))
          (navmap (epub--xml-node ncx 'navMap))
@@ -35,7 +39,7 @@
     (indented-text-mode)
     (erase-buffer)
     (insert title "\n\n")
-    (epub--insert-navmap navmap)
+    (epub--insert-navmap navmap archive ncx-path)
     (insert "\n\n")
     (if epub--debug (epub--insert-xml archive ncx-file))
     (goto-char (point-min))
@@ -50,14 +54,40 @@
     (unless no-pretty-print
       (epub--pretty-print-xml start (point)))))
 
-(defun epub--insert-navpoint (navpoint text)
-  ;; TODO: Turn these into buttons that link to chapters
-  (insert text "\n"))
+(defun epub--create-navpoint-handler (archive node-path buffer)
+  (let* ((split-node (split-string node-path "#"))
+         (arc-path (car split-node))
+         (html-path (cadr split-node)))
+    (lambda (unused-param)
+      (with-temp-buffer
+        ;; TODO think about caching page content
+        (archive-zip-extract archive arc-path)
+        (let ((dom (libxml-parse-html-region (point-min) (point-max))))
+          (with-current-buffer (get-buffer-create buffer)
+            (erase-buffer)
+            (shr-insert-document dom)
+            (goto-char (point-min)))))
+      (switch-to-buffer buffer))))
 
-(defun epub--insert-navmap (navmap)
+(defun epub--insert-navpoint (navpoint ncx-path archive &optional ident-str)
+  (let ((navpoint-content (epub--xml-prop (epub--xml-node navpoint 'content) 'src))
+        (text (caddr-safe (epub--xml-node navpoint 'navLabel 'text)))
+        (point-start (point)))
+    (when ident-str (insert ident-str)) 
+    (insert text)
+    (make-text-button
+     point-start (point)
+     'action (epub--create-navpoint-handler
+              archive (concat ncx-path navpoint-content) text)
+     'follow-link t)                                               
+    (insert "\n")))
+
+(defun epub--insert-navmap (navmap archive ncx-path &optional ident-str)
   (cl-loop for navpoint in navmap
            when (epub--xml-node navpoint 'navLabel 'text)
-           do (epub--insert-navpoint navpoint (caddr-safe it))))
+           do
+           (epub--insert-navpoint navpoint ncx-path archive ident-str)
+           (epub--insert-navmap navpoint archive ncx-path (concat ident-str "  "))))
 
 (defun epub--pretty-print-xml (&optional begin end)
   (interactive (and (use-region-p) (list (region-beginning) (region-end))))
@@ -76,9 +106,8 @@
       (error "Unable to locate epub document root file"))
     full-path))
 
-(defun epub--locate-ncx (archive)
-  (let* ((rootfile (epub--locate-rootfile archive))
-         (dom (epub--archive-get-xml archive rootfile))
+(defun epub--locate-ncx (archive rootfile)
+  (let* ((dom (epub--archive-get-xml archive rootfile))
          (manifest (epub--xml-node dom 'manifest))
          (ncx
           (cl-loop for item in (cddr-safe manifest)
@@ -110,7 +139,8 @@
     (epub--insert-xml archive name t)
     (libxml-parse-xml-region (point-min) (point-max))))
 
-
+(unless (fboundp 'libxml-parse-html-region)
+  (error "epub.el requires Emacs to be compiled with libxml2"))
 (add-to-list 'auto-mode-alist '("\\.epub\\'" . epub-mode))
 (add-to-list 'auto-coding-alist '("\\.epub\\'" . no-conversion-multibyte))
 
