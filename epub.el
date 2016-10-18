@@ -7,10 +7,15 @@
   (let* ((archive buffer-file-name)
          (name (file-name-sans-extension (file-name-nondirectory archive)))
          (toc (format "Table of Contents (%s)" name)))
-    (kill-buffer)
+    (unless epub--debug
+      (kill-buffer))
     (epub--show-toc archive toc)))
 
 (defvar epub--debug nil)
+
+(defvar epub--archive-cache nil
+  "Contains xml and page content cache as alist in format
+(ARCHIVE-PATH . ((CONTENT-PATH . VALUE) ...) ...)")
 
 (defvar-local archive-file nil)
 
@@ -49,6 +54,8 @@
 
 (defun epub--insert-xml (archive name &optional no-pretty-print)
   (let ((start (point-marker)))
+    (when epub--debug
+      (message "Extracting %S, looking for %S" archive name))
     (archive-zip-extract archive name)
     (decode-coding-inserted-region start (point) name)
     (unless no-pretty-print
@@ -59,14 +66,11 @@
          (arc-path (car split-node))
          (html-path (cadr split-node)))
     (lambda (unused-param)
-      (with-temp-buffer
-        ;; TODO think about caching page content
-        (archive-zip-extract archive arc-path)
-        (let ((dom (libxml-parse-html-region (point-min) (point-max))))
-          (with-current-buffer (get-buffer-create buffer)
-            (erase-buffer)
-            (shr-insert-document dom)
-            (goto-char (point-min)))))
+      (with-current-buffer (get-buffer-create buffer)
+        (let ((rendered (epub--archive-get-rendered-page archive arc-path)))
+          (erase-buffer)
+          (insert rendered)
+          (goto-char (point-min))))
       (switch-to-buffer buffer))))
 
 (defun epub--insert-navpoint (navpoint ncx-path archive &optional ident-str)
@@ -134,10 +138,62 @@
 (defun epub--href-relative (name &optional relative-to)
   (concat (or (file-name-directory (or relative-to "")) "") name))
 
-(defun epub--archive-get-xml (archive name &optional relative-to)
-  (with-temp-buffer
-    (epub--insert-xml archive name t)
-    (libxml-parse-xml-region (point-min) (point-max))))
+(defun epub--fill-cache (archive name value)
+  (push (cons name value)
+        (cdr (assoc archive epub--archive-cache)))
+  value)
+
+(defun epub--get-cached(archive name &optional cache-fill-func)
+  (let ((arc-cache (cdr (assoc archive epub--archive-cache))))
+    (unless arc-cache
+      (push (cons archive nil)
+            epub--archive-cache))
+    (let ((cache (cdr (assoc name arc-cache))))
+      (when (and (not cache)
+                 cache-fill-func)
+        (setq cache (funcall cache-fill-func archive name)))
+      cache)))
+
+(defun epub--fill-dom-cache (archive name)
+  (let ((dom-cache (with-temp-buffer
+                     (when epub--debug
+                       (message "Extracting %S, looking for %S" archive name))
+                     (archive-zip-extract archive name)
+                     (libxml-parse-html-region (point-min) (point-max)))))
+    (epub--fill-cache archive name dom-cache)))
+
+(defun epub--archive-get-dom (archive name)
+  (epub--get-cached archive
+                    name
+                    #'epub--fill-dom-cache))
+
+(defun epub--fill-render-cache (archive name)
+  (let ((rendered
+         (with-temp-buffer
+           (when epub--debug
+             (message "Extracting %S, looking for %S" archive name))
+           (archive-zip-extract archive name)
+           (let ((dom (libxml-parse-html-region (point-min) (point-max))))
+             (erase-buffer)
+             (shr-insert-document dom)
+             (buffer-substring (point-min) (point-max))))))
+    (epub--fill-cache archive name rendered)))
+
+(defun epub--archive-get-rendered-page (archive name)
+  (epub--get-cached archive
+                    name
+                    #'epub--fill-render-cache))
+
+(defun epub--fill-xml-cache (archive name)
+  (let ((xml-cache (with-temp-buffer
+                     (epub--insert-xml archive name t)
+                     (libxml-parse-xml-region (point-min) (point-max)))))
+    (epub--fill-cache archive name xml-cache)))
+
+(defun epub--archive-get-xml (archive name)
+  (epub--get-cached archive
+                    name
+                    #'epub--fill-xml-cache))
 
 (unless (fboundp 'libxml-parse-html-region)
   (error "epub.el requires Emacs to be compiled with libxml2"))
