@@ -15,7 +15,9 @@
 
 (defvar epub--archive-cache nil
   "Contains xml and page content cache as alist in format
-(ARCHIVE-PATH . ((CONTENT-PATH . VALUE) ...) ...)")
+((ARCHIVE-PATH . ((CONTENT-PATH . VALUE)
+                  ...))
+ ...)")
 
 (defvar-local archive-file nil)
 
@@ -66,12 +68,28 @@
          (arc-path (car split-node))
          (html-path (cadr split-node)))
     (lambda (unused-param)
-      (with-current-buffer (get-buffer-create buffer)
-        (let ((rendered (epub--archive-get-rendered-page archive arc-path)))
-          (erase-buffer)
-          (insert rendered)
-          (goto-char (point-min))))
-      (switch-to-buffer buffer))))
+      (switch-to-buffer (get-buffer-create buffer))
+      (let ((dom (epub--archive-get-dom archive arc-path)))
+        (erase-buffer)
+        (shr-insert-document dom)
+        (goto-char (point-min)))
+      ;;  (let ((rendered (epub--archive-get-rendered-page archive arc-path)))
+      ;;    (erase-buffer)
+      ;;    (insert rendered)
+      ;;    (goto-char (point-min)))
+      )))
+
+
+;;; BIG UGLY HACK - REDEFINING shr-image-fetched
+(defvar shr-image-fetched-original
+  (symbol-function 'shr-image-fetched))
+
+(defun shr-image-fetched (status buffer start end &optional flags)
+  ;; For some reason shr-image-fetched expects to be in the beginnig of
+  ;; the buffer containing image, and isn't. So let's move it manually
+  (goto-char (point-min))
+  (funcall shr-image-fetched-original
+           status buffer start end flags))
 
 (defun epub--insert-navpoint (navpoint ncx-path archive &optional ident-str)
   (let ((navpoint-content (epub--xml-prop (epub--xml-node navpoint 'content) 'src))
@@ -156,10 +174,10 @@
 
 (defun epub--fill-dom-cache (archive name)
   (let ((dom-cache (with-temp-buffer
-                     (when epub--debug
-                       (message "Extracting %S, looking for %S" archive name))
                      (archive-zip-extract archive name)
-                     (libxml-parse-html-region (point-min) (point-max)))))
+                     (epub--convert-links archive
+                                          (libxml-parse-html-region (point-min)
+                                                                    (point-max))))))
     (epub--fill-cache archive name dom-cache)))
 
 (defun epub--archive-get-dom (archive name)
@@ -167,13 +185,43 @@
                     name
                     #'epub--fill-dom-cache))
 
+(defun epub--map-alist (alist mapper)
+  "Maps ALIST entries with MAPPER function. 
+Mapper must accept a cons cell and return updated cons cell"
+  (cond ((not (listp alist)) alist) ;; atom
+        ((not (listp (cdr alist))) (funcall mapper alist)) ;; flat alist entry
+        (t (mapcar (lambda (x) (epub--map-alist x mapper)) ;; nested alists
+                   alist))))
+
+(defun epub--extract-link (archive link)
+  "From ARCHIVE, extract file at relative path LINK and return url for extracted"
+  (let ((tmp-file (make-temp-file "epub-src"
+                                  nil
+                                  (file-name-extension link t))))
+    (with-temp-file tmp-file
+      (archive-zip-extract archive link)
+      (goto-char (point-min))
+      (concat "file://" tmp-file))))
+
+(defun epub--convert-links (archive dom)
+  (epub--map-alist dom
+                   (lambda (x)
+                     (if (eq (car x) 'src)
+                         (let ((result-link
+                                (epub--extract-link archive (cdr x))))
+                           (cons 'src result-link))
+                       x))))
+
 (defun epub--fill-render-cache (archive name)
   (let ((rendered
          (with-temp-buffer
            (when epub--debug
              (message "Extracting %S, looking for %S" archive name))
            (archive-zip-extract archive name)
-           (let ((dom (libxml-parse-html-region (point-min) (point-max))))
+           (let ((dom
+                  (epub--convert-links archive
+                                       (libxml-parse-html-region (point-min)
+                                                                 (point-max)))))
              (erase-buffer)
              (shr-insert-document dom)
              (buffer-substring (point-min) (point-max))))))
