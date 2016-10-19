@@ -79,7 +79,6 @@
       ;;    (goto-char (point-min)))
       )))
 
-
 ;;; BIG UGLY HACK - REDEFINING shr-image-fetched
 (defvar shr-image-fetched-original
   (symbol-function 'shr-image-fetched))
@@ -204,12 +203,14 @@ Mapper must accept a cons cell and return updated cons cell"
       (concat "file://" tmp-file))))
 
 (defun epub--convert-links (archive dom)
+  "From ARCHIVE, extract non-external links in DOM and replace them 
+with links to temporary files. Returns updated DOM"
   (epub--map-alist dom
                    (lambda (x)
-                     (if (eq (car x) 'src)
-                         (let ((result-link
-                                (epub--extract-link archive (cdr x))))
-                           (cons 'src result-link))
+                     (if (and (eq (car x) 'src)
+                              (not (string-match "^[[:alpha:]]+[[:alnum:]+-.]*://"  ; assume URL is anything that starts with proper scheme name followed by ://
+                                                 (cdr x))))
+                           (cons 'src (epub--extract-link archive (cdr x)))
                        x))))
 
 (defun epub--fill-render-cache (archive name)
