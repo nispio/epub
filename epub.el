@@ -80,15 +80,17 @@
       )))
 
 ;;; BIG UGLY HACK - REDEFINING shr-image-fetched
-(defvar shr-image-fetched-original
-  (symbol-function 'shr-image-fetched))
+(eval-after-load "shr"
+  '(progn
+     (defvar shr-image-fetched-original
+       (symbol-function 'shr-image-fetched))
 
-(defun shr-image-fetched (status buffer start end &optional flags)
-  ;; For some reason shr-image-fetched expects to be in the beginnig of
-  ;; the buffer containing image, and isn't. So let's move it manually
-  (goto-char (point-min))
-  (funcall shr-image-fetched-original
-           status buffer start end flags))
+     (defun shr-image-fetched (status buffer start end &optional flags)
+       ;; For some reason shr-image-fetched expects to be in the beginnig of
+       ;; the buffer containing image, and isn't. So let's move it manually
+       (goto-char (point-min))
+       (funcall shr-image-fetched-original
+                status buffer start end flags))))
 
 (defun epub--insert-navpoint (navpoint ncx-path archive &optional ident-str)
   (let ((navpoint-content (epub--xml-prop (epub--xml-node navpoint 'content) 'src))
@@ -176,7 +178,8 @@
                      (archive-zip-extract archive name)
                      (epub--convert-links archive
                                           (libxml-parse-html-region (point-min)
-                                                                    (point-max))))))
+                                                                    (point-max))
+										  (file-name-directory name)))))
     (epub--fill-cache archive name dom-cache)))
 
 (defun epub--archive-get-dom (archive name)
@@ -202,7 +205,7 @@ Mapper must accept a cons cell and return updated cons cell"
       (goto-char (point-min))
       (concat "file://" tmp-file))))
 
-(defun epub--convert-links (archive dom)
+(defun epub--convert-links (archive dom link-root)
   "From ARCHIVE, extract non-external links in DOM and replace them 
 with links to temporary files. Returns updated DOM"
   (epub--map-alist dom
@@ -210,7 +213,9 @@ with links to temporary files. Returns updated DOM"
                      (if (and (eq (car x) 'src)
                               (not (string-match "^[[:alpha:]]+[[:alnum:]+-.]*://"  ; assume URL is anything that starts with proper scheme name followed by ://
                                                  (cdr x))))
-                           (cons 'src (epub--extract-link archive (cdr x)))
+						 (cons 'src
+							   (epub--extract-link archive
+												   (concat link-root (cdr x))))
                        x))))
 
 (defun epub--fill-render-cache (archive name)
@@ -222,7 +227,8 @@ with links to temporary files. Returns updated DOM"
            (let ((dom
                   (epub--convert-links archive
                                        (libxml-parse-html-region (point-min)
-                                                                 (point-max)))))
+                                                                 (point-max))
+									   (file-name-directory name))))
              (erase-buffer)
              (shr-insert-document dom)
              (buffer-substring (point-min) (point-max))))))
