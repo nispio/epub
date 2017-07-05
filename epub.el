@@ -134,7 +134,11 @@
          (manifest (epub--xml-node dom 'manifest))
          (ncx
           (cl-loop for item in (cddr-safe manifest)
-                   when (string= "ncx" (epub--xml-prop item 'id))
+                   when (and
+                         (string= "application/x-dtbncx+xml"
+                                  (epub--xml-prop item 'media-type))
+                         (string-prefix-p "ncx"
+                                          (epub--xml-prop item 'id) t))
                    return item))
          (href (epub--xml-prop ncx 'href)))
     (unless (stringp href)
